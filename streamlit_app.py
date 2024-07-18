@@ -510,7 +510,7 @@ def main():
         
         col1, col2 = st.columns([2,1])
         with col1:
-            st.write("Welcome to the Advanced Stock Screener. This tool allows you to analyze stocks from the S&P 100 index and get AI-powered insights.")
+            st.write("Welcome to the Advanced Stock Screener. This tool allows you to analyze stocks from the S&P 500 index and get AI-powered insights.")
         with col2:
             run_screener = st.button("Run Stock Screener", key="run_screener")
 
