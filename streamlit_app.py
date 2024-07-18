@@ -47,7 +47,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-client = OpenAI(api_key=os.environ.get('OPEN_AI_API_KEY'))
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/S%26P_100"
