@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 from scipy.stats import norm
 from statsmodels.tsa.stattools import adfuller
-import openai
+
 import plotly.graph_objects as go
 import plotly.express as px
 import base64
