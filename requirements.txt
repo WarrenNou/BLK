@@ -9,3 +9,4 @@ numpy
 statsmodels
 openai
 plotly
+cvxpy
