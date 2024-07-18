@@ -47,7 +47,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 client = OpenAI()
 
 def get_sp500_tickers():
