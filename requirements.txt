@@ -12,3 +12,4 @@ plotly
 cvxpy
 cvxpy
 scipy
+XlsxWriter
