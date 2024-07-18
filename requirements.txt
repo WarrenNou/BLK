@@ -10,3 +10,5 @@ statsmodels
 openai
 plotly
 cvxpy
+cvxpy
+scipy
