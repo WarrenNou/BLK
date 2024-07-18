@@ -19,7 +19,7 @@ from openai import OpenAI
 import os
 
 warnings.filterwarnings('ignore')
-
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 # Set page configuration
 st.set_page_config(page_title="BlackRock Advanced Stock Screener", layout="wide")
 
@@ -47,7 +47,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+
 
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/S%26P_100"
