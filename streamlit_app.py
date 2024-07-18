@@ -16,6 +16,7 @@ import plotly.express as px
 import base64
 from io import StringIO
 from openai import OpenAI
+import io
 import os
 
 warnings.filterwarnings('ignore')
@@ -47,12 +48,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-
 def get_sp500_tickers():
-    url = "https://en.wikipedia.org/wiki/S%26P_100"
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     tables = pd.read_html(url)
-    sp100 = tables[2]
+    sp100 = tables[0]
     return sp100['Symbol'].tolist()
 
 def get_stock_data(ticker, period="5y"):
@@ -128,9 +127,10 @@ def calculate_beta(stock_returns, market_returns):
     market_variance = np.var(market_returns)
     return covariance / market_variance
 
-def calculate_alpha(stock_returns, market_returns, risk_free_rate=0.02):
+def calculate_alpha(stock_returns, market_returns, risk_free_rate=0.05):
     beta = calculate_beta(stock_returns, market_returns)
-    alpha = np.mean(stock_returns) - risk_free_rate - beta * np.mean(market_returns)
+    # Corrected formula for alpha calculation
+    alpha = (np.mean(stock_returns) - risk_free_rate) - (beta * (np.mean(market_returns) - risk_free_rate))
     return alpha * 252  # Annualized alpha
 
 def calculate_information_ratio(stock_returns, benchmark_returns):
@@ -200,7 +200,15 @@ def backtest_strategy(df, window_short=50, window_long=200):
         'Max Drawdown': max_drawdown
     }
 def convert_df_to_csv(df):
-    return df.to_csv(index=False).encode('utf-8')
+    # Create a bytes buffer
+    output = io.BytesIO()
+    # Write the dataframe to the buffer as an Excel file
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    # Seek to the start of the stream
+    output.seek(0)
+    # Return the binary content of the Excel file
+    return output.getvalue()
 
 def screen_stock(ticker):
     try:
@@ -244,37 +252,37 @@ def screen_stock(ticker):
         
         # Scoring system
         technical_score = sum([
-            15 if latest['Close'] > latest['SMA_50'] > latest['SMA_200'] else 0,
+            np.interp(latest['Close'], [latest['SMA_200'], latest['SMA_50']], [0, 15]),
             15 if 30 < latest['RSI'] < 70 else 0,
-            15 if latest['MACD'] > latest['Signal_Line'] else 0,
+            np.interp(latest['MACD'] - latest['Signal_Line'], [-0.5, 0.5], [0, 15]),
             15 if latest['Momentum'] > 0 else 0,
             15 if trend_slope > 0 and trend_score > 0.6 else 0,
-            15 if latest['Close'] > latest['Bollinger_Upper'] else 0,
+            np.interp(latest['Close'], [latest['Bollinger_Lower'], latest['Bollinger_Upper']], [0, 15]),
             10 if latest['OBV'] > df['OBV'].mean() else 0
         ])
         
         fundamental_score = sum([
-            10 if 10 < fundamental_data['P/E'] < 30 else 5 if 30 <= fundamental_data['P/E'] < 60 else 0,
-            10 if 0 < fundamental_data['P/B'] < 2 else 5 if 2 <= fundamental_data['P/B'] < 5 else 0,
-            10 if fundamental_data['Debt/Equity'] < 0.5 else 5 if 0.5 <= fundamental_data['Debt/Equity'] < 1.5 else 0,
-            10 if fundamental_data['ROE'] > 0.2 else 5 if 0.15 <= fundamental_data['ROE'] <= 0.2 else 0,
-            10 if fundamental_data['Profit Margin'] > 0.2 else 5 if 0.1 <= fundamental_data['Profit Margin'] <= 0.2 else 0,
-            10 if fundamental_data['Revenue Growth'] > 0.2 else 5 if 0.1 <= fundamental_data['Revenue Growth'] <= 0.2 else 0,
-            10 if fundamental_data['Earnings Growth'] > 0.2 else 5 if 0.1 <= fundamental_data['Earnings Growth'] <= 0.2 else 0,
-            10 if fundamental_data['Free Cash Flow'] > 0.5 else 5 if 0.3 <= fundamental_data['Free Cash Flow'] <= 0.5 else 0,
-            10 if fundamental_data['Dividend Yield'] > 0.02 else 5 if 0.01 <= fundamental_data['Dividend Yield'] <= 0.02 else 0,
-            10 if fundamental_data['Market Cap'] > 1e10 else 5 if 1e9 <= fundamental_data['Market Cap'] <= 1e10 else 0
+            np.interp(fundamental_data['P/E'], [60, 10], [0, 10]),
+            np.interp(fundamental_data['P/B'], [5, 0], [0, 10]),
+            np.interp(fundamental_data['Debt/Equity'], [1.5, 0.5], [0, 10]),
+            np.interp(fundamental_data['ROE'], [0.15, 0.2], [5, 10]),
+            np.interp(fundamental_data['Profit Margin'], [0.1, 0.2], [5, 10]),
+            np.interp(fundamental_data['Revenue Growth'], [0.1, 0.2], [5, 10]),
+            np.interp(fundamental_data['Earnings Growth'], [0.1, 0.2], [5, 10]),
+            np.interp(fundamental_data['Free Cash Flow'], [0.3, 0.5], [5, 10]),
+            np.interp(fundamental_data['Dividend Yield'], [0.01, 0.02], [5, 10]),
+            np.interp(fundamental_data['Market Cap'], [1e9, 1e10], [5, 10])
         ])
         
         performance_score = sum([
-            15 if sharpe_ratio > 1.2 else 0,
-            15 if sortino_ratio > 1 else 0,
-            15 if calmar_ratio > 0.5 else 0,
-            15 if information_ratio > 0.5 else 0,
+            np.interp(sharpe_ratio, [1, 1.2], [0, 15]),
+            np.interp(sortino_ratio, [0.8, 1], [0, 15]),
+            np.interp(calmar_ratio, [0.3, 0.5], [0, 15]),
+            np.interp(information_ratio, [0.3, 0.5], [0, 15]),
             10 if var_95 > -0.02 else 0,
             10 if cvar_95 > -0.03 else 0,
             10 if max_drawdown > -0.2 else 0,
-            10 if backtest_results['Total Return'] > 0.5 else 0
+            np.interp(backtest_results['Total Return'], [0.3, 0.5], [0, 10])
         ])
         
         total_score = (0.35 * technical_score + 0.25 * fundamental_score + 0.4 * performance_score)
@@ -384,115 +392,79 @@ def screen_stocks():
     return pd.DataFrame(results).sort_values('Total Score', ascending=False)
 
 import cvxpy as cp
+from scipy.optimize import minimize
 
 def build_portfolio(age, goal, risk_level, screened_stocks):
-    # Define bond allocation based on age
-    if age < 35:
-        bond_allocation = 0.1
-    elif 35 <= age < 50:
-        bond_allocation = 0.2
-    else:
-        bond_allocation = 0.3
-
     # Define risk tolerance based on risk level
     risk_tolerance = {
         'Low': 0.05,
         'Medium': 0.1,
-        'High': 0.2
+        'High': 0.25
     }
-    
-    if risk_level not in risk_tolerance:
-        raise ValueError("Invalid risk level provided. Choose from 'Conservative', 'Moderate', 'Aggressive'.")
-    
     target_volatility = risk_tolerance[risk_level]
 
-    # Ensure 'Market Cap' column exists and is numeric
-    if 'Market Cap' not in screened_stocks.columns:
-        screened_stocks['Market Cap'] = np.nan
-    screened_stocks['Market Cap'] = pd.to_numeric(screened_stocks['Market Cap'], errors='coerce')
-
-    # Filter stocks based on market cap
-    large_cap = screened_stocks[screened_stocks['Market Cap'] > 10e9]
-    mid_cap = screened_stocks[(screened_stocks['Market Cap'] > 2e9) & (screened_stocks['Market Cap'] <= 10e9)]
-    small_cap = screened_stocks[screened_stocks['Market Cap'] <= 2e9]
-
-    # If any category is empty, fill it with the top stocks from the screened list
-    if large_cap.empty:
-        large_cap = screened_stocks.nlargest(5, 'Total Score')
-    if mid_cap.empty:
-        mid_cap = screened_stocks.nlargest(5, 'Total Score').iloc[5:10]
-    if small_cap.empty:
-        small_cap = screened_stocks.nlargest(5, 'Total Score').iloc[10:15]
-
-    # Combine the stocks
-    portfolio_stocks = pd.concat([large_cap, mid_cap, small_cap])
-
-    # Expand the portfolio to 15 stocks based on 'Total Score'
-    portfolio_stocks = screened_stocks.nlargest(15, 'Total Score')
+    # Filter stocks based on Total Score
+    top_stocks = screened_stocks.nlargest(20, 'Total Score')
 
     # Get historical price data
-    tickers = portfolio_stocks['Ticker'].tolist()
+    tickers = top_stocks['Ticker'].tolist()
     price_data = yf.download(tickers, period="5y")['Adj Close']
 
     # Calculate returns and covariance matrix
     returns = price_data.pct_change().mean() * 252
     covariance = price_data.pct_change().cov() * 252
 
-    # Set up the optimization problem
-    num_stocks = len(tickers)
-    weights = cp.Variable(num_stocks)
-    portfolio_return = returns.values @ weights
-    portfolio_risk = cp.quad_form(weights, covariance.values)
+    # Define the objective function (negative Sharpe Ratio)
+    def objective(weights):
+        portfolio_return = np.sum(returns * weights)
+        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(covariance, weights)))
+        return -(portfolio_return - 0.02) / portfolio_volatility  # Assuming risk-free rate of 2%
 
-    # Objective: Maximize returns while controlling risk
-    objective = cp.Maximize(portfolio_return - target_volatility * portfolio_risk)
-    constraints = [cp.sum(weights) == (1 - bond_allocation), weights >= 0]
+    # Define constraints
+    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})  # Weights sum to 1
+    bounds = tuple((0, 0.25) for _ in range(len(tickers)))  # No short selling, max 25% in one stock
 
-    prob = cp.Problem(objective, constraints)
-    prob.solve()
+    # Perform the optimization
+    initial_weights = np.array([1/len(tickers)] * len(tickers))
+    result = minimize(objective, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
 
     # Get the optimal weights
-    optimal_weights = weights.value
+    optimal_weights = result.x
 
     # Create the portfolio dataframe
-    portfolio = portfolio_stocks.copy()
-    portfolio['Allocation'] = optimal_weights
-
-    # Add bond ETF to the portfolio
-    bond_df = pd.DataFrame({
-        'Ticker': ['AGG'],
-        'Allocation': [bond_allocation]
+    portfolio = pd.DataFrame({
+        'Ticker': tickers,
+        'Allocation': optimal_weights,
+        'Price': top_stocks["Price"].values,
+        'Total Score': top_stocks['Total Score'].values,
+        'Rating': top_stocks['Rating'].values
     })
 
-    portfolio = pd.concat([portfolio, bond_df], ignore_index=True)
+    # Sort by allocation (descending) and reset index
+    portfolio = portfolio.sort_values('Allocation', ascending=False).reset_index(drop=True)
 
-    # Monte Carlo simulation
-    num_simulations = 100
-    num_days = 252
-    simulation_results = np.zeros((num_simulations, num_days))
+    # Adjust allocations based on age and goal
+    bond_allocation = min(age / 110, 0.4)  # Increase bond allocation with age, max 40%
+    if goal == "Short-term Savings":
+        bond_allocation = max(bond_allocation, 0.3)  # At least 30% bonds for short-term goals
 
-    for i in range(num_simulations):
-        simulated_prices = pd.DataFrame(index=np.arange(num_days), columns=tickers)
-        for ticker in tickers:
-            simulated_prices[ticker] = simulated_prices.index.to_series().apply(
-                lambda x: price_data[ticker].iloc[-1] * np.exp(
-                    (returns[ticker] / 252) * x - 0.5 * (covariance.loc[ticker, ticker] / 252) * x +
-                    np.sqrt(covariance.loc[ticker, ticker] / 252) * np.random.normal()
-                )
-            )
-        portfolio_values = simulated_prices.dot(optimal_weights)
-        simulation_results[i, :] = portfolio_values
+    # Add bond ETF to the portfolio
+    bond_etf = pd.DataFrame({
+        'Ticker': ['AGG'],
+        'Allocation': [bond_allocation],
+        'Price': [yf.Ticker('AGG').history(period="1d")['Close'].iloc[-1]],
+        'Total Score': [np.nan],
+        'Rating': ['N/A']
+    })
 
-    # Plot the results of the Monte Carlo simulation
-    plt.figure(figsize=(10, 6))
-    plt.plot(simulation_results.T)
-    plt.title('Monte Carlo Simulation of Portfolio Value Over Time')
-    plt.xlabel('Days')
-    plt.ylabel('Portfolio Value')
-    plt.show()
+    # Adjust stock allocations
+    stock_allocation_sum = portfolio['Allocation'].sum()
+    portfolio['Allocation'] = portfolio['Allocation'] * (1 - bond_allocation) / stock_allocation_sum
+
+    # Combine stocks and bond ETF
+    portfolio = pd.concat([portfolio, bond_etf], ignore_index=True)
 
     return portfolio
-
 def plot_stock_data(stock_data, ticker):
     stock_data['SMA_50'] = calculate_sma(stock_data['Close'], 50)
     stock_data['SMA_200'] = calculate_sma(stock_data['Close'], 200)
@@ -529,12 +501,12 @@ def plot_portfolio_allocation(portfolio):
     return fig
 
 def main():
-    st.sidebar.image("https://www.blackrock.com/blk-logo-white-rgb.svg", use_column_width=True)
+    st.sidebar.image("https://www.bing.com/images/search?view=detailV2&ccid=bq9jclpI&id=6E1D986277EA13212A92D2DE8F7A8016C2006AFE&thid=OIP.bq9jclpIyuRRoUdtHP5pZwHaHa&mediaurl=https%3a%2f%2fcdn.pulse2.com%2fcdn%2f2020%2f04%2fblackrock_logo.png&cdnurl=https%3a%2f%2fth.bing.com%2fth%2fid%2fR.6eaf63725a48cae451a1476d1cfe6967%3frik%3d%252fmoAwhaAeo%252fe0g%26pid%3dImgRaw%26r%3d0&exph=1200&expw=1200&q=blackrock&simid=608020842785494443&FORM=IRPRST&ck=CCFBFD8F8A23810E8C7BFB5441144329&selectedIndex=1&itb=0&ajaxhist=0&ajaxserp=0", use_column_width=True)
     st.sidebar.title("Navigation")
     app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder"])
 
     if app_mode == "Stock Screener":
-        st.title("Stock Screener")
+        st.title(" Advanced Stock Screener")
         
         col1, col2 = st.columns([2,1])
         with col1:
@@ -555,9 +527,9 @@ def main():
 
             csv = convert_df_to_csv(screened_stocks)
             st.download_button(
-                label="Download full results as CSV",
+                label="Download full results as excel",
                 data=csv,
-                file_name="stock_screening_results.csv",
+                file_name="stock_screening_results.xlsx",
                 mime="text/csv",
             )
 
@@ -615,9 +587,9 @@ def main():
                     st.write("Answer:", answer)
 
     elif app_mode == "Portfolio Builder":
-        st.title("BlackRock Portfolio Builder")
+        st.title(" Portfolio Builder")
         
-        st.write("Welcome to the BlackRock Portfolio Builder. This tool helps you create a personalized investment portfolio based on your age, goals, and risk tolerance.")
+        st.write("Welcome to the  Portfolio Builder. This tool helps you create a personalized investment portfolio based on your age, goals, and risk tolerance.")
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -640,9 +612,9 @@ def main():
 
             csv = convert_df_to_csv(portfolio)
             st.download_button(
-                label="Download portfolio as CSV",
+                label="Download portfolio as xcel",
                 data=csv,
-                file_name="personalized_portfolio.csv",
+                file_name="personalized_portfolio.xlsx",
                 mime="text/csv",
             )
 
