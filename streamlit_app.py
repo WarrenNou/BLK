@@ -535,11 +535,11 @@ def main():
     app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder"])
 
     if app_mode == "Stock Screener":
-        st.title("BlackRock Advanced Stock Screener")
+        st.title("Stock Screener")
         
         col1, col2 = st.columns([2,1])
         with col1:
-            st.write("Welcome to the BlackRock Advanced Stock Screener. This tool allows you to analyze stocks from the S&P 100 index and get AI-powered insights.")
+            st.write("Welcome to the Advanced Stock Screener. This tool allows you to analyze stocks from the S&P 100 index and get AI-powered insights.")
         with col2:
             run_screener = st.button("Run Stock Screener", key="run_screener")
 
