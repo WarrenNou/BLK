@@ -374,7 +374,7 @@ def get_chatgpt_analysis(data, user_question=None):
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a financial analyst providing concise on stock and portfolio data."},
+            {"role": "system", "content": "You are a financial analyst providing concise on stock and portfolio data. Also answer user questiion on stocks and finance"},
             {"role": "user", "content": prompt}
         ]
     )
