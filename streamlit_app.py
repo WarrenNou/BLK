@@ -18,6 +18,13 @@ from io import StringIO
 from openai import OpenAI
 import io
 import os
+import cvxpy as cp
+from scipy.optimize import minimize
+
+
+from textblob import TextBlob
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
 
 warnings.filterwarnings('ignore')
 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
@@ -71,6 +78,8 @@ def calculate_metrics(df):
     df['Bollinger_Upper'], df['Bollinger_Lower'] = calculate_bollinger_bands(df['Close'])
     df['ATR'] = calculate_atr(df)
     df['OBV'] = calculate_obv(df)
+    df['EPS_Growth'] = df['Close'].pct_change(periods=252)  # Assuming 252 trading days in a year
+    df['Price_to_Sales'] = df['Close'] / (df['Volume'] * df['Close'].mean())  # Rough estimate
     return df
 
 def calculate_sma(data, window):
@@ -160,7 +169,6 @@ def calculate_hurst_exponent(time_series, max_lag=100):
 def perform_adf_test(time_series):
     result = adfuller(time_series)
     return result[1]  # p-value
-
 def get_fundamental_data(ticker):
     stock = yf.Ticker(ticker)
     try:
@@ -175,10 +183,15 @@ def get_fundamental_data(ticker):
             'Earnings Growth': info.get('earningsGrowth', np.nan),
             'Free Cash Flow': info.get('freeCashflow', np.nan),
             'Dividend Yield': info.get('dividendYield', np.nan),
-            'Market Cap': info.get('marketCap', np.nan)
+            'Market Cap': info.get('marketCap', np.nan),
+            'EV/EBITDA': info.get('enterpriseToEbitda', np.nan),
+            'Price to Sales': info.get('priceToSalesTrailing12Months', np.nan),
+            'Operating Margin': info.get('operatingMargins', np.nan),
+            'Quick Ratio': info.get('quickRatio', np.nan)
         }
     except:
-        return {k: np.nan for k in ['P/E', 'P/B', 'Debt/Equity', 'ROE', 'Profit Margin', 'Revenue Growth', 'Earnings Growth', 'Free Cash Flow', 'Dividend Yield', 'Market Cap']}
+        return {k: np.nan for k in ['P/E', 'P/B', 'Debt/Equity', 'ROE', 'Profit Margin', 'Revenue Growth', 'Earnings Growth', 'Free Cash Flow', 'Dividend Yield', 'Market Cap', 'EV/EBITDA', 'Price to Sales', 'Operating Margin', 'Quick Ratio']}
+
 def backtest_strategy(df, window_short=50, window_long=200):
     df['SMA_Short'] = df['Close'].rolling(window=window_short).mean()
     df['SMA_Long'] = df['Close'].rolling(window=window_long).mean()
@@ -270,8 +283,10 @@ def screen_stock(ticker):
             np.interp(fundamental_data['Revenue Growth'], [0.1, 0.2], [5, 10]),
             np.interp(fundamental_data['Earnings Growth'], [0.1, 0.2], [5, 10]),
             np.interp(fundamental_data['Free Cash Flow'], [0.3, 0.5], [5, 10]),
-            np.interp(fundamental_data['Dividend Yield'], [0.01, 0.02], [5, 10]),
-            np.interp(fundamental_data['Market Cap'], [1e9, 1e10], [5, 10])
+            np.interp(fundamental_data['EV/EBITDA'], [15, 5], [0, 10]),  # New
+            np.interp(fundamental_data['Price to Sales'], [10, 1], [0, 10]),  # New
+            np.interp(fundamental_data['Operating Margin'], [0.1, 0.3], [0, 10]),  # New
+            np.interp(fundamental_data['Quick Ratio'], [0.5, 2], [0, 10])  # New
         ])
         
         performance_score = sum([
@@ -285,7 +300,7 @@ def screen_stock(ticker):
             np.interp(backtest_results['Total Return'], [0.3, 0.5], [0, 10])
         ])
         
-        total_score = (0.35 * technical_score + 0.25 * fundamental_score + 0.4 * performance_score)
+        total_score = (0.25 * technical_score + 0.35 * fundamental_score + 0.4 * performance_score)
         
         # Determine rating based on total score
         if total_score >= 80:
@@ -324,7 +339,9 @@ def screen_stock(ticker):
             'Earnings Growth': fundamental_data['Earnings Growth'],
             'Backtest Total Return': backtest_results['Total Return'],
             'Backtest Sharpe Ratio': backtest_results['Sharpe Ratio'],
-            'Backtest Max Drawdown': backtest_results['Max Drawdown']
+            'Backtest Max Drawdown': backtest_results['Max Drawdown'],
+            'Operating Margin': fundamental_data['Operating Margin'],
+            'Quick Ratio': fundamental_data['Quick Ratio'],
         }
     except Exception as e:
         print(f"Error processing {ticker}: {str(e)}")
@@ -365,7 +382,7 @@ def get_chatgpt_analysis(data, user_question=None):
         Stock Allocations: {', '.join([f'{stock}: {allocation:.2%}' for stock, allocation in zip(data['Stocks'], data['Allocations'])])}
 
         Provide a brief analysis of the portfolio composition, its alignment with the investor's profile (age, goal, and risk tolerance), 
-        potential risks, and opportunities. Suggest any improvements or adjustments that might be beneficial.
+        potential risks, and opportunities. Suggest any improvements or adjustments that might be beneficial. answer user questions
         """
 
     if user_question:
@@ -391,9 +408,6 @@ def screen_stocks():
     
     return pd.DataFrame(results).sort_values('Total Score', ascending=False)
 
-import cvxpy as cp
-from scipy.optimize import minimize
-
 def build_portfolio(age, goal, risk_level, screened_stocks):
     # Define risk tolerance based on risk level
     risk_tolerance = {
@@ -418,7 +432,8 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
     def objective(weights):
         portfolio_return = np.sum(returns * weights)
         portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(covariance, weights)))
-        return -(portfolio_return - 0.02) / portfolio_volatility  # Assuming risk-free rate of 2%
+        sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility
+        return -sharpe_ratio
 
     # Define constraints
     constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})  # Weights sum to 1
@@ -500,10 +515,41 @@ def plot_portfolio_allocation(portfolio):
     fig = px.pie(portfolio, values='Allocation', names='Ticker', title='Portfolio Allocation')
     return fig
 
+def get_news_sentiment(ticker):
+    """Get news sentiment for a given stock using Yahoo Finance."""
+    try:
+        # Fetch stock information using Yahoo Finance
+        stock = yf.Ticker(ticker)
+        
+        # Fetch news related to the stock
+        news = stock.news
+        
+        if not news:
+            return 0, []  # Neutral sentiment and empty list if no news found
+        
+        # Extract titles and links
+        titles_links = [(article['title'], article['link']) for article in news if 'title' in article and 'link' in article]
+        
+        if not titles_links:
+            return 0, []  # Neutral sentiment and empty list if no valid titles found
+        
+        # Initialize SentimentIntensityAnalyzer
+        sia = SentimentIntensityAnalyzer()
+        
+        # Analyze sentiment of each title
+        scores = [sia.polarity_scores(title)['compound'] for title, link in titles_links]
+        
+        # Return the average sentiment score and titles with links
+        return np.mean(scores), titles_links
+    
+    except Exception as e:
+        print(f"Error fetching news sentiment for {ticker}: {e}")
+        return 0, []  # Neutral sentiment and empty list in case of any errors
+
 def main():
     st.sidebar.image("https://www.bing.com/images/search?view=detailV2&ccid=bq9jclpI&id=6E1D986277EA13212A92D2DE8F7A8016C2006AFE&thid=OIP.bq9jclpIyuRRoUdtHP5pZwHaHa&mediaurl=https%3a%2f%2fcdn.pulse2.com%2fcdn%2f2020%2f04%2fblackrock_logo.png&cdnurl=https%3a%2f%2fth.bing.com%2fth%2fid%2fR.6eaf63725a48cae451a1476d1cfe6967%3frik%3d%252fmoAwhaAeo%252fe0g%26pid%3dImgRaw%26r%3d0&exph=1200&expw=1200&q=blackrock&simid=608020842785494443&FORM=IRPRST&ck=CCFBFD8F8A23810E8C7BFB5441144329&selectedIndex=1&itb=0&ajaxhist=0&ajaxserp=0", use_column_width=True)
     st.sidebar.title("Navigation")
-    app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder"])
+    app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder",'News/ Sentiment Analysis'])
 
     if app_mode == "Stock Screener":
         st.title(" Advanced Stock Screener")
@@ -634,6 +680,22 @@ def main():
                     'Allocations': portfolio['Allocation'].tolist()
                 })
                 st.write(portfolio_analysis)
-
+    
+    elif app_mode == "News/ Sentiment Analysis":
+        st.title("News/ Sentiment Analysis")
+        st.write("Welcome to the News/ Sentiment Analysis tool. This tool helps you get sentiment score of a stock and the news sorrouding it.")
+        
+        ticker = st.text_input("Enter the stock ticker:").upper()
+        
+        if ticker and not ticker.isalpha():
+            st.error("Please enter a valid stock ticker consisting only of letters.")
+        elif st.button("Sentiment score") and ticker:
+            with st.spinner('sentiment score...'):
+                try:
+                    # Assuming df and fundamental_data are defined earlier in the code or fetched within this block
+                    fair_value = get_news_sentiment( ticker)
+                    st.success(f"The sentiment score for {ticker} is: {fair_value}")
+                except Exception as e:
+                    st.error(f"Failed to estimate fair value due to: {e}")
 if __name__ == "__main__":
     main()
