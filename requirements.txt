@@ -13,3 +13,7 @@ cvxpy
 cvxpy
 scipy
 XlsxWriter
+
+textblob
+nltk
+
