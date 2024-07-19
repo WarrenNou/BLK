@@ -4,16 +4,13 @@ matplotlib
 yfinance
 scipy
 scikit-learn
-futures
 numpy
 statsmodels
 openai
 plotly
 cvxpy
-cvxpy
 scipy
 XlsxWriter
-
 textblob
 nltk
 
