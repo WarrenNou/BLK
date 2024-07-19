@@ -518,28 +518,28 @@ def plot_portfolio_allocation(portfolio):
 def get_news_sentiment(ticker):
     """Get news sentiment for a given stock using Yahoo Finance."""
     
-        # Fetch stock information using Yahoo Finance
+    # Fetch stock information using Yahoo Finance
     stock = yf.Ticker(ticker)
-        
-        # Fetch news related to the stock
+    
+    # Fetch news related to the stock
     news = stock.news
-        
+    
     if not news:
         return 0, []  # Neutral sentiment and empty list if no news found
-        
-        # Extract titles and links
+    
+    # Extract titles and links
     titles_links = [(article['title'], article['link']) for article in news if 'title' in article and 'link' in article]
-        
+    
     if not titles_links:
         return 0, []  # Neutral sentiment and empty list if no valid titles found
-        
-        # Initialize SentimentIntensityAnalyzer
+    
+    # Initialize SentimentIntensityAnalyzer
     sia = SentimentIntensityAnalyzer()
-        
-        # Analyze sentiment of each title
+    
+    # Analyze sentiment of each title
     scores = [sia.polarity_scores(title)['compound'] for title, link in titles_links]
-        
-        # Return the average sentiment score and titles with links
+    
+    # Return the average sentiment score and titles with links
     return np.mean(scores), titles_links
 
 def main():
