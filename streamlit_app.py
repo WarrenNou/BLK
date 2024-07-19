@@ -408,7 +408,7 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
 
     # Get historical price data
     tickers = top_stocks['Ticker'].tolist()
-    price_data = yf.download(tickers, period="2y")['Adj Close']
+    price_data = yf.download(tickers, period="2y", progress=False)['Adj Close']
 
     # Calculate returns and covariance matrix
     returns = price_data.pct_change().mean() * 252
