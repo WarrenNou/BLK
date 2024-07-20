@@ -514,38 +514,35 @@ def plot_stock_data(stock_data, ticker):
 def plot_portfolio_allocation(portfolio):
     fig = px.pie(portfolio, values='Allocation', names='Ticker', title='Portfolio Allocation')
     return fig
-
-def get_news_sentiment(ticker):
-    """Get news sentiment for a given stock using Yahoo Finance."""
-    try:
-        # Fetch stock information using Yahoo Finance
-        stock = yf.Ticker(ticker)
-        
-        # Fetch news related to the stock
-        news = stock.news
-        
-        if not news:
-            return 0, []  # Neutral sentiment and empty list if no news found
-        
-        # Extract titles and links
-        titles_links = [(article['title'], article['link']) for article in news if 'title' in article and 'link' in article]
-        
-        if not titles_links:
-            return 0, []  # Neutral sentiment and empty list if no valid titles found
-        
-        # Initialize SentimentIntensityAnalyzer
-        sia = SentimentIntensityAnalyzer()
-        
-        # Analyze sentiment of each title
-        scores = [sia.polarity_scores(title)['compound'] for title, link in titles_links]
-        
-        # Return the average sentiment score and titles with links
-        return np.mean(scores), titles_links
     
+from finvizfinance.quote import finvizfinance
+def get_news_sentiment(ticker):
+    try:
+        stock = finvizfinance(ticker)  # Create an instance for the given ticker
+        outer_ratings_df = stock.ticker_outer_ratings()
+        news_df = stock.ticker_news()
+        # Get only the title and link of the top 10 news items
+        top_news_df = news_df[['Title', 'Link']].head(10)
+        top_outer = outer_ratings_df[['Date', 'Status', 'Outer', 'Rating', 'Price']].head(6)
+        # Initialize the Sentiment Intensity Analyzer
+        sia = SentimentIntensityAnalyzer()   
+        # Apply sentiment analysis to each title and create a new column 'Sentiment'
+        top_news_df['Sentiment'] = top_news_df['Title'].apply(lambda title: sia.polarity_scores(title)['compound'])
+        # Filter out news items with a sentiment score of 0
+        filtered_df = top_news_df[top_news_df['Sentiment'] != 0]
+        # Calculate the average sentiment score of the filtered DataFrame
+        if not filtered_df.empty:
+            average_sentiment = filtered_df['Sentiment'].mean()
+        else:
+            average_sentiment = 0  # Return 0 if all sentiments are 0 or if there are no news items
+        # Filter `top_news_df` to include only rows where 'Sentiment' is not 0 for `top_news`
+        top_news = filtered_df[['Title', 'Link']]
+        return top_outer, average_sentiment, top_news
     except Exception as e:
-        print(f"Error fetching news sentiment for {ticker}: {e}")
-        return 0, []  # Neutral sentiment and empty list in case of any errors
-
+        # Handle exceptions by returning an error message or logging the error
+        print(f"An error occurred: {e}")
+        # Return None or default values to indicate failure
+        return None, None, None
 
 def main():
     st.sidebar.image("https://www.bing.com/images/search?view=detailV2&ccid=bq9jclpI&id=6E1D986277EA13212A92D2DE8F7A8016C2006AFE&thid=OIP.bq9jclpIyuRRoUdtHP5pZwHaHa&mediaurl=https%3a%2f%2fcdn.pulse2.com%2fcdn%2f2020%2f04%2fblackrock_logo.png&cdnurl=https%3a%2f%2fth.bing.com%2fth%2fid%2fR.6eaf63725a48cae451a1476d1cfe6967%3frik%3d%252fmoAwhaAeo%252fe0g%26pid%3dImgRaw%26r%3d0&exph=1200&expw=1200&q=blackrock&simid=608020842785494443&FORM=IRPRST&ck=CCFBFD8F8A23810E8C7BFB5441144329&selectedIndex=1&itb=0&ajaxhist=0&ajaxserp=0", use_column_width=True)
@@ -694,8 +691,14 @@ def main():
             with st.spinner('sentiment score...'):
                 try:
                     # Assuming df and fundamental_data are defined earlier in the code or fetched within this block
-                    fair_value = get_news_sentiment( ticker)
-                    st.success(f"The sentiment score for {ticker} is: {fair_value}")
+                    top_outer, average_sentiment, top_news = get_news_sentiment( ticker)
+                    st.success(f"The sentiment score for {ticker} is: {average_sentiment}")
+                    # Formatting top_news for display
+                    news_display = "\n".join([f"{index + 1}. {row['Title']} - {row['Link']}" for index, row in top_news.iterrows()])
+                    st.success(f"The news and links for {ticker} are:  \n{news_display}")
+                    # Formatting top_outer for display
+                    outer_display = "\n".join([f"{index + 1}. Date: {row['Date']}, Status: {row['Status']}, Outer: {row['Outer']}, Rating: {row['Rating']}, Price: {row['Price']}" for index, row in top_outer.iterrows()])
+                    st.success(f"Top Outer Ratings for {ticker} are: \n{outer_display}")
                 except Exception as e:
                     st.error(f"Failed to estimate fair value due to: {e}")
 if __name__ == "__main__":
