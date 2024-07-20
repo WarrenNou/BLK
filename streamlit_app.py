@@ -389,7 +389,7 @@ def get_chatgpt_analysis(data, user_question=None):
         prompt += f"\n\nUser's Question: {user_question}\n\nPlease provide a detailed answer to the user's question based on the given data."
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "You are a financial analyst providing concise on stock and portfolio data. Also answer user questiion on stocks and finance"},
             {"role": "user", "content": prompt}
