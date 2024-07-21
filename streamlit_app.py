@@ -605,12 +605,17 @@ def main():
                     st.write(f"Beta: {stock_data['Beta']:.2f}")
                     st.write(f"VaR (95%): {stock_data['VaR (95%)']:.2%}")
                     st.write(f"Max Drawdown: {stock_data['Max Drawdown']:.2%}")
+                    st.write(f"Trend Slope: {stock_data['Trend Slope']:.4f}")
+                    st.write(f"Hurst Exponent: {stock_data['Hurst Exponent']:.4f}")
+                    st.write(f"Volatility: {stock_data['Volatility']:.2%}")
 
                 with col2:
                     st.write("#### Fundamental Indicators")
                     st.write(f"P/E Ratio: {stock_data['P/E']:.2f}")
                     st.write(f"Revenue Growth: {stock_data['Revenue Growth']:.2%}")
                     st.write(f"Earnings Growth: {stock_data['Earnings Growth']:.2%}")
+                    st.write(f"Operating Margin: {stock_data['Operating Margin']:.2%}")
+                    st.write(f"Quick Ratio: {stock_data['Quick Ratio']:.2f}")
                     st.write(f"Backtest Total Return: {stock_data['Backtest Total Return']:.2%}")
                     st.write(f"Backtest Sharpe Ratio: {stock_data['Backtest Sharpe Ratio']:.2f}")
 
