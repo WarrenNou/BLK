@@ -34,24 +34,97 @@ st.set_page_config(page_title="BlackRock Advanced Stock Screener", layout="wide"
 # Custom CSS to improve the interface
 st.markdown("""
 <style>
-    .reportview-container {
-        background: #f0f2f6
+    /* Hide Streamlit branding */
+    .css-1d391kg {
+        display: none;
     }
+    /* Overall background */
+    body {
+        background-color: #f0f2f5 !important;
+    }
+    .reportview-container .main .block-container {
+        max-width: 1200px;
+        padding-top: 5rem;
+        padding-right: 2rem;
+        padding-left: 2rem;
+        margin: auto;
+    }
+    /* Sidebar styling */
     .sidebar .sidebar-content {
-        background: #ffffff
-    }
-    .Widget>label {
-        color: #31333F;
-        font-weight: bold;
-    }
-    .stButton>button {
+        background-color: #333744;
         color: #ffffff;
-        background-color: #0056b3;
-        border-radius: 5px;
+    }
+    /* Links color */
+    a {
+        color: #0083B8;
+    }
+    /* Widget labels */
+    .Widget>label {
+        color: #4f4f4f;
+        font-weight: 400;
+    }
+    /* Buttons */
+    .stButton>button {
+        border: 2px solid #4CAF50;
+        line-height: 2.5;
+        border-radius: 20px;
+        color: #ffffff;
+        background-color: #4CAF50;
+        transition: all 0.3s;
+        box-shadow: none;
     }
     .stButton>button:hover {
-        background-color: #003d82;
+        background-color: #45a049;
     }
+    /* Form input aesthetics */
+    .stTextInput>div>div>input, .stSelectbox>select, .stTextArea>div>div>textarea {
+        border-radius: 20px;
+        border: 1px solid #ced4da;
+    }
+    /* Markdown text adjustments */
+    .markdown-text-container {
+        font-family: 'Arial', sans-serif;
+        color: #333;
+    }
+    /* Table styling */
+    .stTable>div>div>div>div {
+        background-color: #fff;
+        color: #333;
+    }
+    /* Radio buttons */
+    .stRadio>div>div {
+        background-color: #fafafa;
+        border-radius: 20px;
+    }
+    /* Slider styling */
+    .stSlider>div>div>div>div {
+        background-color: #4CAF50;
+        border-radius: 20px;
+    }
+    /* File uploader */
+    .stFileUploader>div>div>div>button {
+        border-radius: 20px;
+        border: 2px dashed #4CAF50;
+    }
+    /* Checkboxes */
+    .stCheckbox>div>div>label>span {
+        background-color: #4CAF50;
+        border-radius: 3px;
+    }
+    /* Select boxes */
+    .stSelectbox>select {
+        border-radius: 20px;
+        border: 1px solid #ced4da;
+    }
+    /* Progress bars */
+    .stProgress>div>div>div>div {
+        background-color: #4CAF50;
+    }
+    /* Hide hamburger menu and Streamlit footer */
+    header {visibility: hidden;}
+    .css-1kyxreq {visibility: hidden;}
+    .css-1v3fvcr {visibility: hidden;}
+    footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,7 +134,7 @@ def get_sp500_tickers():
     sp100 = tables[0]
     return sp100['Symbol'].tolist()
 
-def get_stock_data(ticker, period="5y"):
+def get_stock_data(ticker, period="10y"):
     stock = yf.Ticker(ticker)
     hist = stock.history(period=period)
     return hist
