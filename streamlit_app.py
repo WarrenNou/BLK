@@ -134,7 +134,7 @@ def get_sp500_tickers():
     sp100 = tables[0]
     return sp100['Symbol'].tolist()
 
-def get_stock_data(ticker, period="10y"):
+def get_stock_data(ticker, period="5y"):
     stock = yf.Ticker(ticker)
     hist = stock.history(period=period)
     return hist
