@@ -128,11 +128,35 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def get_sp500_tickers():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
-    sp100 = tables[0]
-    return sp100['Symbol'].tolist()
+def get_sp500_tickers(index_name):
+    if index_name == 'S&P 500':
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        tables = pd.read_html(url)
+        tickers = tables[0]['Symbol'].tolist()
+    elif index_name == 'S&P 100':
+        url = 'https://en.wikipedia.org/wiki/S%26P_100'
+        tables = pd.read_html(url)
+        tickers = tables[2]['Symbol'].tolist()
+    elif index_name == 'Dow Jones':
+        url = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
+        tables = pd.read_html(url)
+        tickers = tables[1]['Symbol'].tolist()
+    elif index_name == 'Nasdaq-100':
+        url = 'https://en.wikipedia.org/wiki/NASDAQ-100'
+        tables = pd.read_html(url)
+        tickers = tables[4]['Ticker'].tolist()
+    elif index_name == 'S&P 600':
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
+        tables = pd.read_html(url)
+        tickers = tables[0]['Symbol'].tolist()
+    elif index_name == 'Russell 1000':
+        url = "https://en.wikipedia.org/wiki/Russell_1000_Index"
+        tables = pd.read_html(url)
+        tickers = tables[2]['Symbol'].tolist()  # This table index might change
+
+    else:
+        tickers = []
+    return tickers
 
 def get_stock_data(ticker, period="5y"):
     stock = yf.Ticker(ticker)
@@ -470,8 +494,8 @@ def get_chatgpt_analysis(data, user_question=None):
     )
 
     return response.choices[0].message.content
-def screen_stocks():
-    tickers = get_sp500_tickers()
+def screen_stocks(index_name):
+    tickers = get_sp500_tickers(index_name)
     results = []
     
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -480,6 +504,31 @@ def screen_stocks():
                 results.append(result)
     
     return pd.DataFrame(results).sort_values('Total Score', ascending=False)
+
+def fetch_data(tickers, period="5y"):
+    data = yf.download(tickers, period=period, progress=False)['Adj Close']
+    return data
+
+def calculate_returns(data):
+    returns = data.pct_change().dropna()
+    return returns
+
+def portfolio_performance(weights, returns):
+    annual_return = np.sum(returns.mean() * weights) * 252
+    annual_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
+    return annual_return, annual_volatility
+
+def neg_sharpe_ratio(weights, returns, risk_free_rate=0.02):
+    p_return, p_volatility = portfolio_performance(weights, returns)
+    sharpe_ratio = (p_return - risk_free_rate) / p_volatility
+    return -sharpe_ratio
+
+def max_drawdown(returns):
+    cumulative_returns = (1 + returns).cumprod()
+    peak = cumulative_returns.cummax()
+    drawdown = (cumulative_returns - peak) / peak
+    max_drawdown = drawdown.min()
+    return max_drawdown
 
 def build_portfolio(age, goal, risk_level, screened_stocks):
     # Define risk tolerance based on risk level
@@ -495,15 +544,16 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
 
     # Get historical price data
     tickers = top_stocks['Ticker'].tolist()
-    price_data = yf.download(tickers, period="2y", progress=False)['Adj Close']
+    price_data = fetch_data(tickers)
 
     # Calculate returns and covariance matrix
-    returns = price_data.pct_change().mean() * 252
-    covariance = price_data.pct_change().cov() * 252
+    returns = calculate_returns(price_data)
+    mean_returns = returns.mean() * 252
+    covariance = returns.cov() * 252
 
     # Define the objective function (negative Sharpe Ratio)
     def objective(weights):
-        portfolio_return = np.sum(returns * weights)
+        portfolio_return = np.sum(mean_returns * weights)
         portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(covariance, weights)))
         sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility
         return -sharpe_ratio
@@ -535,6 +585,8 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
     bond_allocation = min(age / 110, 0.4)  # Increase bond allocation with age, max 40%
     if goal == "Short-term Savings":
         bond_allocation = max(bond_allocation, 0.3)  # At least 30% bonds for short-term goals
+    elif goal == "Retirement":
+        bond_allocation = max(bond_allocation, 0.2)  # At least 20% bonds for retirement
 
     # Add bond ETF to the portfolio
     bond_etf = pd.DataFrame({
@@ -545,14 +597,35 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
         'Rating': ['N/A']
     })
 
-    # Adjust stock allocations
+    # Adjust stock allocations based on risk level
     stock_allocation_sum = portfolio['Allocation'].sum()
     portfolio['Allocation'] = portfolio['Allocation'] * (1 - bond_allocation) / stock_allocation_sum
+
+    # Apply risk level adjustment
+    risk_adjustment_factor = risk_tolerance[risk_level]
+    portfolio['Allocation'] *= risk_adjustment_factor
+
+    # Normalize allocations to sum to 1 after adjustment
+    portfolio['Allocation'] /= portfolio['Allocation'].sum()
 
     # Combine stocks and bond ETF
     portfolio = pd.concat([portfolio, bond_etf], ignore_index=True)
 
-    return portfolio
+    # Calculate portfolio performance metrics
+    portfolio_returns = returns.dot(optimal_weights)
+    portfolio_return, portfolio_volatility = portfolio_performance(optimal_weights, returns)
+    sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility
+    max_dd = max_drawdown(portfolio_returns)
+
+    portfolio_metrics = {
+        'Return': portfolio_return,
+        'Volatility': portfolio_volatility,
+        'Sharpe Ratio': sharpe_ratio,
+        'Max Drawdown': max_dd
+    }
+
+    return portfolio, portfolio_metrics
+
 def plot_stock_data(stock_data, ticker):
     stock_data['SMA_50'] = calculate_sma(stock_data['Close'], 50)
     stock_data['SMA_200'] = calculate_sma(stock_data['Close'], 200)
@@ -616,25 +689,59 @@ def get_news_sentiment(ticker):
         print(f"An error occurred: {e}")
         # Return None or default values to indicate failure
         return None, None, None
+# Setting a better visual style
+import seaborn as sns
+sns.set(style="whitegrid")
 
+def plot_efficient_frontier(risk_levels, returns_efficient):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(risk_levels, returns_efficient, marker='o', linestyle='-', color='b')
+    ax.set_title('Efficient Frontier')
+    ax.set_xlabel('Risk (Standard Deviation)')
+    ax.set_ylabel('Return')
+    ax.grid(True)
+    return fig
+def calculate_risk_metrics(returns, market_returns=None):
+    vol = returns.std() * np.sqrt(252)
+    var = np.percentile(returns, 5)
+    cvar = returns[returns <= var].mean()
+    sharpe_ratio = (returns.mean() * 252) / vol
+    if market_returns is not None:
+        beta = np.cov(returns, market_returns)[0, 1] / np.var(market_returns)
+    else:
+        beta = np.nan
+    return vol, var, cvar, beta, sharpe_ratio
+
+def plot_returns_distribution(returns, ticker):
+    fig = px.histogram(returns, nbins=50, title=f"{ticker} Returns Distribution")
+    fig.add_vline(x=returns.mean(), line_dash="dash", line_color="red", annotation_text="Mean")
+    fig.add_vline(x=returns.mean() + returns.std(), line_dash="dash", line_color="blue", annotation_text="+1 Std Dev")
+    fig.add_vline(x=returns.mean() - returns.std(), line_dash="dash", line_color="blue", annotation_text="-1 Std Dev")
+    return fig
 def main():
-    st.sidebar.image("https://www.bing.com/images/search?view=detailV2&ccid=bq9jclpI&id=6E1D986277EA13212A92D2DE8F7A8016C2006AFE&thid=OIP.bq9jclpIyuRRoUdtHP5pZwHaHa&mediaurl=https%3a%2f%2fcdn.pulse2.com%2fcdn%2f2020%2f04%2fblackrock_logo.png&cdnurl=https%3a%2f%2fth.bing.com%2fth%2fid%2fR.6eaf63725a48cae451a1476d1cfe6967%3frik%3d%252fmoAwhaAeo%252fe0g%26pid%3dImgRaw%26r%3d0&exph=1200&expw=1200&q=blackrock&simid=608020842785494443&FORM=IRPRST&ck=CCFBFD8F8A23810E8C7BFB5441144329&selectedIndex=1&itb=0&ajaxhist=0&ajaxserp=0", use_column_width=True)
     st.sidebar.title("Navigation")
-    app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder",'News/ Sentiment Analysis'])
+    app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder","Risk analysis","Portfolio Optimization",'News/ Sentiment Analysis'])
 
     if app_mode == "Stock Screener":
-        st.title(" Advanced Stock Screener")
+        st.title("Advanced Stock Screener")
+
+        def rerun():
+            st.session_state.screened_stocks = None
+
         
-        col1, col2 = st.columns([2,1])
+        index_selection = st.selectbox("Select the index for analysis", ["S&P 500", "S&P 100","S&P 600",'Dow Jones',"Russell 1000",'Nasdaq-100'], on_change=rerun)
+        
+        
+        col1, col2 = st.columns([2, 1])
         with col1:
-            st.write("Welcome to the Advanced Stock Screener. This tool allows you to analyze stocks from the S&P 500 index and get AI-powered insights.")
+            st.write("Welcome to the Advanced Stock Screener. This tool allows you to analyze stocks from index and get AI-powered insights.")
         with col2:
             run_screener = st.button("Run Stock Screener", key="run_screener")
 
-        if run_screener or 'screened_stocks' in st.session_state:
-            if 'screened_stocks' not in st.session_state:
+        if run_screener or st.session_state.get('screened_stocks') is not None:
+            if st.session_state.get('screened_stocks') is None:
                 with st.spinner("Running stock screener..."):
-                    st.session_state.screened_stocks = screen_stocks()
+                    st.session_state.screened_stocks = screen_stocks(index_selection)
                 st.success("Stock screening complete!")
             
             screened_stocks = st.session_state.screened_stocks
@@ -709,10 +816,14 @@ def main():
                     st.write("Answer:", answer)
 
     elif app_mode == "Portfolio Builder":
-        st.title(" Portfolio Builder")
-        
-        st.write("Welcome to the  Portfolio Builder. This tool helps you create a personalized investment portfolio based on your age, goals, and risk tolerance.")
+        st.title("Portfolio Builder")
+        def rerun():
+            st.session_state.screened_stocks = None
 
+        st.write("Welcome to the Portfolio Builder. This tool helps you create a personalized investment portfolio based on your age, goals, and risk tolerance.")
+        index_selection = st.selectbox("Select the index for analysis", ["S&P 500", "S&P 100","S&P 600",'Dow Jones',"Russell 1000",'Nasdaq-100'], on_change=rerun)
+        
+        tickers = get_sp500_tickers(index_selection)
         col1, col2, col3 = st.columns(3)
         with col1:
             age = st.slider("What is your age?", 18, 100, 30)
@@ -724,8 +835,8 @@ def main():
         if st.button("Build Portfolio"):
             with st.spinner("Building your portfolio..."):
                 if 'screened_stocks' not in st.session_state:
-                    st.session_state.screened_stocks = screen_stocks()
-                portfolio = build_portfolio(age, goal, risk_level, st.session_state.screened_stocks)
+                    st.session_state.screened_stocks = screen_stocks(index_selection)
+                portfolio, portfolio_metrics = build_portfolio(age, goal, risk_level, st.session_state.screened_stocks)
 
             st.success("Portfolio built successfully!")
 
@@ -734,11 +845,17 @@ def main():
 
             csv = convert_df_to_csv(portfolio)
             st.download_button(
-                label="Download portfolio as xcel",
+                label="Download portfolio as Excel",
                 data=csv,
                 file_name="personalized_portfolio.xlsx",
                 mime="text/csv",
             )
+
+            st.subheader("Portfolio Metrics")
+            st.write(f"**Annual Return:** {portfolio_metrics['Return']:.2%}")
+            st.write(f"**Volatility:** {portfolio_metrics['Volatility']:.2%}")
+            st.write(f"**Sharpe Ratio:** {portfolio_metrics['Sharpe Ratio']:.2f}")
+            st.write(f"**Maximum Drawdown:** {portfolio_metrics['Max Drawdown']:.2%}")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -756,7 +873,126 @@ def main():
                     'Allocations': portfolio['Allocation'].tolist()
                 })
                 st.write(portfolio_analysis)
-    
+    elif app_mode == "Risk analysis":
+        st.title("Risk analysis")
+        st.write("Welcome to the Risk Analysis tool. This tool helps you analyze the risk of individual stocks or your entire portfolio.")
+
+        analysis_type = st.radio("Choose analysis type:", ["Single Stock", "Portfolio"])
+
+        if analysis_type == "Single Stock":
+            ticker = st.text_input("Enter stock ticker:")
+            if ticker:
+                stock_data = get_stock_data(ticker)
+                returns = stock_data['Close'].pct_change().dropna()
+
+                # Market data for beta calculation
+                market_data = get_stock_data('SPY')
+                market_returns = market_data['Close'].pct_change().dropna()
+
+                vol, var, cvar, beta, sharpe_ratio = calculate_risk_metrics(returns, market_returns)
+                
+                st.subheader(f"Risk Metrics for {ticker}")
+                st.write(f"**Volatility:** {vol:.2%}")
+                st.write(f"**Value at Risk (95%):** {var:.2%}")
+                st.write(f"**Conditional Value at Risk (95%):** {cvar:.2%}")
+                st.write(f"**Beta:** {beta:.2f}")
+                st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
+
+                st.subheader(f"{ticker} Returns Distribution")
+                fig = plot_returns_distribution(returns, ticker)
+                st.plotly_chart(fig)
+
+
+        elif analysis_type == "Portfolio":
+            uploaded_file = st.file_uploader("Upload your portfolio CSV file", type="csv")
+            if uploaded_file is not None:
+                portfolio = pd.read_csv(uploaded_file)
+                st.write("Uploaded Portfolio:")
+                st.dataframe(portfolio)
+
+                tickers = portfolio['Ticker'].tolist()
+                weights = portfolio['Allocation'].values
+
+                portfolio_data = yf.download(tickers, period='2y')['Adj Close']
+                portfolio_returns = portfolio_data.pct_change().dropna()
+
+                # Calculate weighted returns
+                weighted_returns = (portfolio_returns * weights).sum(axis=1)
+
+                # Market data for beta calculation
+                market_data = get_stock_data('SPY')
+                market_returns = market_data['Close'].pct_change().dropna()
+
+                vol, var, cvar, beta, sharpe_ratio = calculate_risk_metrics(weighted_returns, market_returns)
+                max_drawdown = (portfolio_data / portfolio_data.cummax() - 1).min().min()
+
+                st.subheader("Portfolio Risk Metrics")
+                st.write(f"**Annual Return:** {weighted_returns.mean() * 252:.2%}")
+                st.write(f"**Volatility:** {vol:.2%}")
+                st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
+                st.write(f"**Maximum Drawdown:** {max_drawdown:.2%}")
+                st.write(f"**Beta:** {beta:.2f}")
+
+                st.subheader("Portfolio Allocation")
+                st.dataframe(portfolio)
+
+                st.subheader("Portfolio Returns Distribution")
+                fig = plot_returns_distribution(weighted_returns, 'Portfolio')
+                st.plotly_chart(fig)
+    elif app_mode == "Portfolio Optimization":
+        st.title("Portfolio Optimization")
+        st.write("Welcome to the Portfolio Optimization tool. This tool helps you optimize your portfolio for maximum return given a risk constraint.")
+
+        tickers = st.text_input("Enter stock tickers (comma-separated):")
+        if tickers:
+            tickers = [t.strip().upper() for t in tickers.split(',')]
+            st.write(f"Selected Tickers: {', '.join(tickers)}")
+
+            # Download data
+            try:
+                data = yf.download(tickers, period="2y")['Adj Close']
+                returns = data.pct_change().dropna()
+            except Exception as e:
+                st.error(f"Error fetching data: {e}")
+                return
+
+            # Calculate annualized expected returns and sample covariance
+            mu = returns.mean() * 252
+            S = returns.cov() * 252
+
+            # Define the optimization problem
+            w = cp.Variable(len(tickers))
+            ret = mu.values @ w
+            risk = cp.quad_form(w, S.values)
+
+            risk_param = cp.Parameter(nonneg=True)
+            prob = cp.Problem(cp.Maximize(ret), [cp.sum(w) == 1, w >= 0, risk <= risk_param])
+
+            # Solve the problem for different risk levels
+            risk_levels = np.linspace(0.1, 0.3, 20)
+            returns_efficient = []
+            for risk_level in risk_levels:
+                risk_param.value = risk_level
+                prob.solve()
+                returns_efficient.append(prob.value)
+
+            # Plot Efficient Frontier
+            st.pyplot(plot_efficient_frontier(risk_levels, returns_efficient))
+
+            # Display optimal portfolio for a given risk level
+            risk_level = st.slider("Select risk level:", min_value=0.1, max_value=0.3, value=0.2, step=0.01)
+            risk_param.value = risk_level
+            prob.solve()
+
+            st.write("Optimal Portfolio Allocation:")
+            weights = w.value
+            for ticker, weight in zip(tickers, weights):
+                st.write(f"{ticker}: {weight:.2%}")
+
+            # Show risk and return for the selected risk level
+            st.write(f"Expected Return: {mu.values @ weights:.2%}")
+            st.write(f"Portfolio Risk (Standard Deviation): {np.sqrt(weights @ S.values @ weights):.2%}")
+
     elif app_mode == "News/ Sentiment Analysis":
         st.title("News/ Sentiment Analysis")
         st.write("Welcome to the News/ Sentiment Analysis tool. This tool helps you get sentiment score of a stock and the news sorrouding it.")
