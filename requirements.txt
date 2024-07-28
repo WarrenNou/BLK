@@ -14,3 +14,4 @@ XlsxWriter
 textblob
 nltk
 finvizfinance
+seaborn
