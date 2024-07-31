@@ -1278,10 +1278,11 @@ def main():
                 st.write("Uploaded Portfolio:")
                 st.dataframe(portfolio)
 
+                
                 tickers = portfolio['Ticker'].tolist()
                 weights = portfolio['Allocation'].values
 
-                portfolio_data = yf.download(tickers, period='2y')['Adj Close']
+                portfolio_data = yf.download(tickers, period='2y',progress=False)['Adj Close']
                 portfolio_returns = portfolio_data.pct_change().dropna()
 
                 # Calculate weighted returns
