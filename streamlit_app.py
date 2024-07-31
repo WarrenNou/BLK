@@ -65,16 +65,16 @@ st.markdown("""
     }
     /* Buttons */
     .stButton>button {
-        border: 2px solid #4CAF50;
+        border: 2px solid #007bff; /* Updated to blue */
         line-height: 2.5;
         border-radius: 20px;
         color: #ffffff;
-        background-color: #4CAF50;
+        background-color: #007bff; /* Updated to blue */
         transition: all 0.3s;
         box-shadow: none;
     }
     .stButton>button:hover {
-        background-color: #45a049;
+        background-color: #006f9a; /* Darker blue for hover effect */
     }
     /* Form input aesthetics */
     .stTextInput>div>div>input, .stSelectbox>select, .stTextArea>div>div>textarea {
@@ -98,17 +98,17 @@ st.markdown("""
     }
     /* Slider styling */
     .stSlider>div>div>div>div {
-        background-color: #4CAF50;
+        background-color: #007bff; /* Updated to blue */
         border-radius: 20px;
     }
     /* File uploader */
     .stFileUploader>div>div>div>button {
         border-radius: 20px;
-        border: 2px dashed #4CAF50;
+        border: 2px dashed #007bff; /* Updated to blue */
     }
     /* Checkboxes */
     .stCheckbox>div>div>label>span {
-        background-color: #4CAF50;
+        background-color: #0083B8; /* Updated to blue */
         border-radius: 3px;
     }
     /* Select boxes */
@@ -118,7 +118,7 @@ st.markdown("""
     }
     /* Progress bars */
     .stProgress>div>div>div>div {
-        background-color: #4CAF50;
+        background-color: #0083B8; /* Updated to blue */
     }
     /* Hide hamburger menu and Streamlit footer */
     header {visibility: hidden;}
@@ -127,6 +127,7 @@ st.markdown("""
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
+
 
 def get_sp500_tickers(index_name):
     if index_name == 'S&P 500':
@@ -445,7 +446,7 @@ def screen_stock(ticker):
     
     return None
 @st.cache_data
-def get_chatgpt_analysis(data, user_question=None):
+def LLM_feedback(data, user_question=None):
     if 'Ticker' in data and data['Ticker'] != 'Portfolio':
         # This is for individual stock analysis
         prompt = f"""
@@ -529,18 +530,28 @@ def max_drawdown(returns):
     drawdown = (cumulative_returns - peak) / peak
     max_drawdown = drawdown.min()
     return max_drawdown
-
+def portfolio_performance(weights, mean_returns, covariance):
+    portfolio_return = np.sum(mean_returns * weights)
+    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(covariance, weights)))
+    return portfolio_return, portfolio_volatility
 def build_portfolio(age, goal, risk_level, screened_stocks):
     # Define risk tolerance based on risk level
     risk_tolerance = {
         'Low': 0.05,
         'Medium': 0.1,
-        'High': 0.25
+        'High': 0.15
     }
     target_volatility = risk_tolerance[risk_level]
 
+    # Adjust number of stocks based on risk level
+    num_stocks = {
+        'Low': 25,
+        'Medium': 20,
+        'High': 15
+    }[risk_level]
+
     # Filter stocks based on Total Score
-    top_stocks = screened_stocks.nlargest(20, 'Total Score')
+    top_stocks = screened_stocks.nlargest(num_stocks, 'Total Score')
 
     # Get historical price data
     tickers = top_stocks['Ticker'].tolist()
@@ -551,23 +562,24 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
     mean_returns = returns.mean() * 252
     covariance = returns.cov() * 252
 
-    # Define the objective function (negative Sharpe Ratio)
-    def objective(weights):
-        portfolio_return = np.sum(mean_returns * weights)
-        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(covariance, weights)))
+    # Monte Carlo simulation to find optimal portfolio
+    num_portfolios = 10000
+    results = np.zeros((4, num_portfolios))
+    weights_record = []
+
+    for i in range(num_portfolios):
+        weights = np.random.random(len(tickers))
+        weights /= np.sum(weights)
+        weights_record.append(weights)
+        portfolio_return, portfolio_volatility = portfolio_performance(weights, mean_returns, covariance)
         sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility
-        return -sharpe_ratio
+        results[0,i] = portfolio_return
+        results[1,i] = portfolio_volatility
+        results[2,i] = sharpe_ratio
 
-    # Define constraints
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})  # Weights sum to 1
-    bounds = tuple((0, 0.25) for _ in range(len(tickers)))  # No short selling, max 25% in one stock
-
-    # Perform the optimization
-    initial_weights = np.array([1/len(tickers)] * len(tickers))
-    result = minimize(objective, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
-
-    # Get the optimal weights
-    optimal_weights = result.x
+    # Find the portfolio with volatility closest to the target volatility
+    min_diff_index = np.argmin(np.abs(results[1] - target_volatility))
+    optimal_weights = weights_record[min_diff_index]
 
     # Create the portfolio dataframe
     portfolio = pd.DataFrame({
@@ -582,11 +594,16 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
     portfolio = portfolio.sort_values('Allocation', ascending=False).reset_index(drop=True)
 
     # Adjust allocations based on age and goal
-    bond_allocation = min(age / 110, 0.4)  # Increase bond allocation with age, max 40%
+    bond_allocation = min(age / 110, 0.6)  # Increase bond allocation with age, max 60%
     if goal == "Short-term Savings":
-        bond_allocation = max(bond_allocation, 0.3)  # At least 30% bonds for short-term goals
+        bond_allocation = max(bond_allocation, 0.4)  # At least 40% bonds for short-term goals
     elif goal == "Retirement":
         bond_allocation = max(bond_allocation, 0.2)  # At least 20% bonds for retirement
+    elif goal == "Wealth Accumulation":
+        bond_allocation = max(bond_allocation * 0.5, 0.1)  # Reduce bond allocation for wealth accumulation
+    # If the age is less than 38 and the goal is not retirement, exclude bonds
+    if age < 38 and goal.lower() != 'retirement':
+        bond_allocation = 0
 
     # Add bond ETF to the portfolio
     bond_etf = pd.DataFrame({
@@ -597,12 +614,11 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
         'Rating': ['N/A']
     })
 
-    # Adjust stock allocations based on risk level
+    # Adjust stock allocations based on risk level and age
     stock_allocation_sum = portfolio['Allocation'].sum()
+    age_factor = 1 - (age / 100)  # Younger investors can take more risk
+    risk_adjustment_factor = risk_tolerance[risk_level] * age_factor
     portfolio['Allocation'] = portfolio['Allocation'] * (1 - bond_allocation) / stock_allocation_sum
-
-    # Apply risk level adjustment
-    risk_adjustment_factor = risk_tolerance[risk_level]
     portfolio['Allocation'] *= risk_adjustment_factor
 
     # Normalize allocations to sum to 1 after adjustment
@@ -612,16 +628,21 @@ def build_portfolio(age, goal, risk_level, screened_stocks):
     portfolio = pd.concat([portfolio, bond_etf], ignore_index=True)
 
     # Calculate portfolio performance metrics
-    portfolio_returns = returns.dot(optimal_weights)
-    portfolio_return, portfolio_volatility = portfolio_performance(optimal_weights, returns)
-    sharpe_ratio = (portfolio_return - 0.02) / portfolio_volatility
-    max_dd = max_drawdown(portfolio_returns)
+    portfolio_return, portfolio_volatility = portfolio_performance(optimal_weights, mean_returns, covariance)
+    sharpe_ratio = (portfolio_return - 0.025) / portfolio_volatility
+    max_dd = max_drawdown(returns.dot(optimal_weights))
+    cumulative_returns = (1 + returns.dot(optimal_weights)).cumprod() - 1
+    annual_return = cumulative_returns.iloc[-1]
+    risk_free_rate = 0.025
+    sortino_ratio = (portfolio_return - risk_free_rate) / np.std(returns[returns < 0].dot(optimal_weights))
 
     portfolio_metrics = {
         'Return': portfolio_return,
         'Volatility': portfolio_volatility,
         'Sharpe Ratio': sharpe_ratio,
-        'Max Drawdown': max_dd
+        'Max Drawdown': max_dd,
+        'Cumulative Return': annual_return,
+        'Sortino Ratio': sortino_ratio
     }
 
     return portfolio, portfolio_metrics
@@ -657,10 +678,33 @@ def plot_stock_data(stock_data, ticker):
     )
     return fig
 
+import plotly.express as px
+
 def plot_portfolio_allocation(portfolio):
-    fig = px.pie(portfolio, values='Allocation', names='Ticker', title='Portfolio Allocation')
-    return fig
+    fig = px.pie(portfolio, 
+                 values='Allocation', 
+                 names='Ticker', 
+                 title='Portfolio Allocation',
+                 color_discrete_sequence=px.colors.sequential.Viridis)
     
+    fig.update_traces(textinfo='percent+label', 
+                      hoverinfo='label+percent+value',
+                      marker=dict(line=dict(color='#000000', width=2)))
+    
+    fig.update_layout(title_text='Portfolio Allocation by Ticker',
+                      title_x=0.5,  # Center the title
+                      showlegend=True,
+                      legend_title_text='Tickers',
+                      legend=dict(
+                          orientation="h",
+                          yanchor="bottom",
+                          y=-0.2,
+                          xanchor="center",
+                          x=0.5
+                      ))
+
+    return fig
+
 from finvizfinance.quote import finvizfinance
 def get_news_sentiment(ticker):
     try:
@@ -701,23 +745,323 @@ def plot_efficient_frontier(risk_levels, returns_efficient):
     ax.set_ylabel('Return')
     ax.grid(True)
     return fig
-def calculate_risk_metrics(returns, market_returns=None):
+def calculate_risk_metrics(returns, market_returns):
+    # Volatility
     vol = returns.std() * np.sqrt(252)
-    var = np.percentile(returns, 5)
-    cvar = returns[returns <= var].mean()
-    sharpe_ratio = (returns.mean() * 252) / vol
-    if market_returns is not None:
-        beta = np.cov(returns, market_returns)[0, 1] / np.var(market_returns)
-    else:
-        beta = np.nan
-    return vol, var, cvar, beta, sharpe_ratio
+    
+    # Value at Risk (VaR) - 95% and 99%
+    var_95 = np.percentile(returns, 5)
+    var_99 = np.percentile(returns, 1)
+    
+    # Conditional Value at Risk (CVaR) - 95% and 99%
+    cvar_95 = returns[returns <= var_95].mean()
+    cvar_99 = returns[returns <= var_99].mean()
+    
+    # Beta
+    covariance = np.cov(returns, market_returns)[0, 1]
+    beta = covariance / market_returns.var()
+    
+    # Sharpe Ratio
+    sharpe_ratio = (returns.mean() * 252 - 0.02) / vol
+    
+    return vol, var_95, cvar_95, var_99, cvar_99, beta, sharpe_ratio
 
-def plot_returns_distribution(returns, ticker):
-    fig = px.histogram(returns, nbins=50, title=f"{ticker} Returns Distribution")
-    fig.add_vline(x=returns.mean(), line_dash="dash", line_color="red", annotation_text="Mean")
-    fig.add_vline(x=returns.mean() + returns.std(), line_dash="dash", line_color="blue", annotation_text="+1 Std Dev")
-    fig.add_vline(x=returns.mean() - returns.std(), line_dash="dash", line_color="blue", annotation_text="-1 Std Dev")
+def calculate_additional_risk_metrics(returns, market_returns):
+    # Drawdown metrics
+    cumulative_returns = (1 + returns).cumprod()
+    drawdowns = (cumulative_returns / cumulative_returns.cummax() - 1)
+    max_drawdown = drawdowns.min()
+    recovery_time = (drawdowns < 0).astype(int).groupby((drawdowns >= 0).astype(int).cumsum()).cumsum().max()
+    
+    # Risk-adjusted returns
+    sortino_ratio = returns.mean() / returns[returns < 0].std() * np.sqrt(252)
+    treynor_ratio = (returns.mean() * 252 - 0.02) / market_returns.mean()
+    
+    # Correlation and covariance
+    correlation = returns.corr(market_returns)
+    covariance = returns.cov(market_returns)
+    
+    # VaR and CVaR
+    var_95 = np.percentile(returns, 5)
+    cvar_95 = returns[returns <= var_95].mean()
+    
+    var_99 = np.percentile(returns, 1)
+    cvar_99 = returns[returns <= var_99].mean()
+    
+    return {
+        'Max Drawdown': max_drawdown,
+        'Recovery Time': recovery_time,
+        'Sortino Ratio': sortino_ratio,
+        'Treynor Ratio': treynor_ratio,
+        'Correlation with Market': correlation,
+        'Covariance with Market': covariance,
+        'VaR (95%)': var_95,
+        'CVaR (95%)': cvar_95,
+        'VaR (99%)': var_99,
+        'CVaR (99%)': cvar_99
+    }
+
+
+def plot_returns_distribution(returns, label):
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=returns, nbinsx=50, name=f'{label} Returns', opacity=0.75))
+    fig.add_trace(go.Scatter(x=np.linspace(returns.min(), returns.max(), 100),
+                             y=norm.pdf(np.linspace(returns.min(), returns.max(), 100), returns.mean(), returns.std()),
+                             mode='lines', name='KDE', line=dict(color='red')))
+    fig.update_layout(title=f'{label} Returns Distribution', xaxis_title='Returns', yaxis_title='Frequency')
     return fig
+
+def plot_drawdown(portfolio_data):
+    drawdowns = (portfolio_data / portfolio_data.cummax() - 1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=drawdowns.index, y=drawdowns.min(axis=1), mode='lines', name='Drawdown'))
+    fig.update_layout(title='Portfolio Drawdown', xaxis_title='Date', yaxis_title='Drawdown')
+    return fig
+import plotly.figure_factory as ff
+def plot_returns_distribution(returns, ticker):
+    # Calculate statistics
+    mean = returns.mean()
+    std_dev = returns.std()
+    
+    # Create histogram
+    hist_data = [returns]
+    group_labels = [ticker]
+    fig = ff.create_distplot(hist_data, group_labels, bin_size=returns.std() * 2, show_rug=False, colors=['#636EFA'])
+    
+    # Add KDE line
+    kde_x = np.linspace(returns.min(), returns.max(), 1000)
+    kde_y = (1 / (std_dev * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((kde_x - mean) / std_dev) ** 2)
+    fig.add_trace(go.Scatter(x=kde_x, y=kde_y, mode='lines', name='KDE', line=dict(color='red', width=2, dash='dot')))
+
+    # Add mean and standard deviation lines
+    fig.add_vline(x=mean, line_dash="dash", line_color="green", annotation_text="Mean", annotation_position="top left")
+    fig.add_vline(x=mean + std_dev, line_dash="dash", line_color="blue", annotation_text="+1 Std Dev", annotation_position="top right")
+    fig.add_vline(x=mean - std_dev, line_dash="dash", line_color="blue", annotation_text="-1 Std Dev", annotation_position="bottom right")
+    
+    # Update layout for better readability and aesthetics
+    fig.update_layout(
+        title=f"{ticker} Returns Distribution",
+        xaxis_title="Returns",
+        yaxis_title="Density",
+        xaxis=dict(title_font_size=14),
+        yaxis=dict(title_font_size=14),
+        title_x=0.5,
+        legend=dict(x=0.01, y=0.99),
+        paper_bgcolor="black",
+        plot_bgcolor="black"
+    )
+    
+    return fig
+def plot_drawdown_curve(returns, title):
+    cumulative_returns = (1 + returns).cumprod()
+    drawdowns = cumulative_returns / cumulative_returns.cummax() - 1
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=drawdowns.index, y=drawdowns, mode='lines', name='Drawdown'))
+    fig.update_layout(
+        title=title,
+        xaxis_title='Date',
+        yaxis_title='Drawdown',
+        xaxis=dict(title_font_size=14),
+        yaxis=dict(title_font_size=14),
+        title_x=0.5,
+        paper_bgcolor="black",
+        plot_bgcolor="black"
+    )
+    
+    return fig
+def plot_correlation_heatmap(returns_data, title):
+    correlation_matrix = returns_data.corr()
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt='.2f', linewidths=0.5)
+    plt.title(title)
+    plt.show()
+def plot_return_boxplot(returns, ticker):
+    fig = go.Figure()
+    fig.add_trace(go.Box(y=returns, name=ticker))
+    fig.update_layout(
+        title=f'{ticker} Return Distribution (Box Plot)',
+        yaxis_title='Returns',
+        xaxis=dict(title_font_size=14),
+        yaxis=dict(title_font_size=14),
+        title_x=0.5,
+        paper_bgcolor="black",
+        plot_bgcolor="black"
+    )
+    
+    return fig
+def plot_efficient_frontier(risk_levels, returns_efficient):
+    fig = go.Figure()
+    
+    # Add the efficient frontier trace
+    fig.add_trace(go.Scatter(
+        x=risk_levels,
+        y=returns_efficient,
+        mode='lines+markers',
+        name='Efficient Frontier',
+        line=dict(color='royalblue', width=3),
+        marker=dict(color='royalblue', size=8, symbol='circle')
+    ))
+    
+    # Add a title and labels
+    fig.update_layout(
+        title={
+            'text': 'Efficient Frontier',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20}
+        },
+        xaxis_title='Risk (Standard Deviation)',
+        yaxis_title='Expected Return',
+        xaxis=dict(
+            showline=True,
+            showgrid=True,
+            zeroline=True,
+            linecolor='black',
+            linewidth=2,
+            gridcolor='lightgray'
+        ),
+        yaxis=dict(
+            showline=True,
+            showgrid=True,
+            zeroline=True,
+            linecolor='black',
+            linewidth=2,
+            gridcolor='lightgray'
+        ),
+        template='plotly_dark',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=60, r=30, t=60, b=40)
+    )
+    
+    # Add a color bar (if needed)
+    fig.update_layout(
+        coloraxis_colorbar=dict(
+            title="Value",
+            tickvals=[0, 1],
+            ticktext=["Low", "High"]
+        )
+    )
+    
+    return fig
+
+def run_monte_carlo(weights, returns, n_simulations=10000, time_horizon=252*3):
+    # Ensure weights are numpy array
+    weights = np.array(weights)
+    
+    # Portfolio returns and volatility
+    portfolio_return = returns.mean().dot(weights) * time_horizon
+    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * time_horizon, weights)))
+    
+    # Simulate returns
+    simulated_returns = np.random.normal(portfolio_return, portfolio_volatility, n_simulations)
+    
+    # Set up the visualization style
+    sns.set(style='whitegrid', palette='dark', rc={'figure.figsize':(16, 8)})
+    
+    # Create a figure with two subplots
+    fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # Histogram of simulated returns with gradient color
+    sns.histplot(simulated_returns, bins=50, kde=True, color='teal', edgecolor='black', ax=ax[0])
+    ax[0].set_title('Histogram of Simulated Returns', fontsize=18, fontweight='bold', color='darkblue')
+    ax[0].set_xlabel('Return', fontsize=16, fontweight='bold')
+    ax[0].set_ylabel('Frequency', fontsize=16, fontweight='bold')
+    ax[0].tick_params(axis='both', which='major', labelsize=14)
+    ax[0].grid(True, linestyle='--', alpha=0.7)
+    
+    # Density plot of simulated returns with vibrant color
+    sns.kdeplot(simulated_returns, shade=True, color='orangered', ax=ax[1], linewidth=2)
+    ax[1].set_title('Density Plot of Simulated Returns', fontsize=18, fontweight='bold', color='darkblue')
+    ax[1].set_xlabel('Return', fontsize=16, fontweight='bold')
+    ax[1].set_ylabel('Density', fontsize=16, fontweight='bold')
+    ax[1].tick_params(axis='both', which='major', labelsize=14)
+    ax[1].grid(True, linestyle='--', alpha=0.7)
+    
+    # Show plot
+    plt.tight_layout()
+    plt.show()
+    
+    return simulated_returns
+
+
+def calculate_portfolio_metrics(weights, returns, benchmark_returns):
+    portfolio_return = returns.mean().dot(weights) * 252
+    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
+    sharpe_ratio = portfolio_return / portfolio_volatility
+    
+    # Calculate VaR and CVaR
+    confidence_level = 0.95
+    simulated_returns = run_monte_carlo(weights, returns)
+    var = np.percentile(simulated_returns, 100 * (1 - confidence_level))
+    cvar = simulated_returns[simulated_returns <= var].mean()
+
+    # Calculate additional metrics
+    downside_returns = returns[returns < 0]
+    downside_volatility = np.sqrt(np.mean(downside_returns ** 2))
+    sortino_ratio = portfolio_return / downside_volatility
+    
+    # Calculate Treynor Ratio
+    benchmark_beta = np.cov(returns, benchmark_returns)[0, 1] / np.var(benchmark_returns)
+    treynor_ratio = portfolio_return / benchmark_beta
+    
+    # Calculate Maximum Drawdown
+    cumulative_returns = (1 + returns).cumprod()
+    peak = cumulative_returns.cummax()
+    drawdown = (cumulative_returns - peak) / peak
+    max_drawdown = drawdown.min()
+    
+    # Calculate Tracking Error and Information Ratio
+    benchmark_returns = benchmark_returns.values
+    tracking_error = np.std(returns - benchmark_returns)
+    information_ratio = portfolio_return / tracking_error
+    
+    return {
+        "Expected Return": portfolio_return,
+        "Volatility": portfolio_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "VaR (95%)": -var,
+        "CVaR (95%)": -cvar,
+        "Sortino Ratio": sortino_ratio,
+        "Treynor Ratio": treynor_ratio,
+        "Maximum Drawdown": max_drawdown,
+        "Tracking Error": tracking_error,
+        "Information Ratio": information_ratio
+        
+    }   
+    
+def optimize_portfolio(returns, target_volatility, min_allocation=0.05):
+    n = len(returns.columns)
+    mu = returns.mean() * 252
+    S = returns.cov() * 252
+
+    # Make sure S is symmetric
+    S = (S + S.T) / 2
+
+    w = cp.Variable(n)
+    ret = mu.values @ w
+    risk = cp.quad_form(w, S.values)
+
+    # Constraints: sum of weights = 1, weights >= minimum allocation, risk <= target volatility squared
+    constraints = [
+        cp.sum(w) == 1,
+        w >= min_allocation,  # Ensure minimum allocation
+        cp.sum(w) == 1,      # Ensure weights sum to 1
+        risk <= target_volatility**2
+    ]
+
+    prob = cp.Problem(cp.Maximize(ret), constraints)
+    prob.solve()
+
+    # Check if the problem was solved
+    if prob.status not in ["infeasible", "unbounded"]:
+        return w.value
+    else:
+        print("Optimization problem was not solved.")
+        return None
+
+
 def main():
     st.sidebar.title("Navigation")
     app_mode = st.sidebar.selectbox("Choose the app mode", ["Stock Screener", "Portfolio Builder","Risk analysis","Portfolio Optimization",'News/ Sentiment Analysis'])
@@ -805,14 +1149,14 @@ def main():
 
                 st.subheader("AI-Powered Analysis")
                 with st.spinner("Generating AI analysis..."):
-                    chatgpt_analysis = get_chatgpt_analysis(stock_data)
+                    chatgpt_analysis =LLM_feedback(stock_data)
                 st.write(chatgpt_analysis)
 
                 st.subheader("Ask a Question")
                 user_question = st.text_input("Ask a question about this stock:")
                 if user_question:
                     with st.spinner("Generating answer..."):
-                        answer = get_chatgpt_analysis(stock_data, user_question)
+                        answer =LLM_feedback(stock_data, user_question)
                     st.write("Answer:", answer)
 
     elif app_mode == "Portfolio Builder":
@@ -855,6 +1199,8 @@ def main():
             st.write(f"**Annual Return:** {portfolio_metrics['Return']:.2%}")
             st.write(f"**Volatility:** {portfolio_metrics['Volatility']:.2%}")
             st.write(f"**Sharpe Ratio:** {portfolio_metrics['Sharpe Ratio']:.2f}")
+            st.write(f"**Sortino Ratio:** {portfolio_metrics['Sortino Ratio']:.2f}")
+            st.write(f"**Cumulative Return:** {portfolio_metrics['Cumulative Return']:.2%}")
             st.write(f"**Maximum Drawdown:** {portfolio_metrics['Max Drawdown']:.2%}")
 
             col1, col2 = st.columns(2)
@@ -864,7 +1210,7 @@ def main():
             
             with col2:
                 st.subheader("Portfolio Analysis")
-                portfolio_analysis = get_chatgpt_analysis({
+                portfolio_analysis =LLM_feedback({
                     'Ticker': 'Portfolio',
                     'Age': age,
                     'Goal': goal,
@@ -889,19 +1235,41 @@ def main():
                 market_data = get_stock_data('SPY')
                 market_returns = market_data['Close'].pct_change().dropna()
 
-                vol, var, cvar, beta, sharpe_ratio = calculate_risk_metrics(returns, market_returns)
+                vol, var_95, cvar_95, var_99, cvar_99, beta, sharpe_ratio = calculate_risk_metrics(returns, market_returns)
                 
-                st.subheader(f"Risk Metrics for {ticker}")
-                st.write(f"**Volatility:** {vol:.2%}")
-                st.write(f"**Value at Risk (95%):** {var:.2%}")
-                st.write(f"**Conditional Value at Risk (95%):** {cvar:.2%}")
-                st.write(f"**Beta:** {beta:.2f}")
-                st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
-
-                st.subheader(f"{ticker} Returns Distribution")
-                fig = plot_returns_distribution(returns, ticker)
-                st.plotly_chart(fig)
-
+                # Additional metrics
+                additional_metrics = calculate_additional_risk_metrics(returns, market_returns)
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.subheader(f"Risk Metrics for {ticker}")
+                    st.write(f"**Volatility:** {vol:.2%}")
+                    st.write(f"**Value at Risk (95%):** {var_95:.2%}")
+                    st.write(f"**Conditional Value at Risk (95%):** {cvar_95:.2%}")
+                    st.write(f"**Value at Risk (99%):** {var_99:.2%}")
+                    st.write(f"**Conditional Value at Risk (99%):** {cvar_99:.2%}")
+                    st.write(f"**Beta:** {beta:.2f}")
+                    st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
+                    st.subheader(f"{ticker} Drawdown Curve")
+                    drawdown_fig = plot_drawdown_curve(returns, f'{ticker} Drawdown Curve')
+                    st.plotly_chart(drawdown_fig)
+                with col2:
+                    
+                    st.write(f"**Maximum Drawdown:** {additional_metrics['Max Drawdown']:.2%}")
+                    st.write(f"**Recovery Time (days):** {additional_metrics['Recovery Time']}")
+                    st.write(f"**Sortino Ratio:** {additional_metrics['Sortino Ratio']:.2f}")
+                    st.write(f"**Treynor Ratio:** {additional_metrics['Treynor Ratio']:.2f}")
+                    st.write(f"**Correlation with Market:** {additional_metrics['Correlation with Market']:.2f}")
+                    
+                    st.subheader(f"{ticker} Returns Distribution")
+                    fig = plot_returns_distribution(returns, ticker)
+                    st.plotly_chart(fig)
+                
+                
+                
+                st.subheader(f"{ticker} Return Distribution (Box Plot)")
+                boxplot_fig = plot_return_boxplot(returns, ticker)
+                st.plotly_chart(boxplot_fig)
+                
 
         elif analysis_type == "Portfolio":
             uploaded_file = st.file_uploader("Upload your portfolio CSV file", type="csv")
@@ -923,15 +1291,19 @@ def main():
                 market_data = get_stock_data('SPY')
                 market_returns = market_data['Close'].pct_change().dropna()
 
-                vol, var, cvar, beta, sharpe_ratio = calculate_risk_metrics(weighted_returns, market_returns)
+                vol, var_95, cvar_95, var_99, cvar_99, beta, sharpe_ratio = calculate_risk_metrics(weighted_returns, market_returns)
                 max_drawdown = (portfolio_data / portfolio_data.cummax() - 1).min().min()
 
                 st.subheader("Portfolio Risk Metrics")
                 st.write(f"**Annual Return:** {weighted_returns.mean() * 252:.2%}")
                 st.write(f"**Volatility:** {vol:.2%}")
-                st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
+                st.write(f"**Value at Risk (95%):** {var_95:.2%}")
+                st.write(f"**Conditional Value at Risk (95%):** {cvar_95:.2%}")
+                st.write(f"**Value at Risk (99%):** {var_99:.2%}")
+                st.write(f"**Conditional Value at Risk (99%):** {cvar_99:.2%}")
                 st.write(f"**Maximum Drawdown:** {max_drawdown:.2%}")
                 st.write(f"**Beta:** {beta:.2f}")
+                st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
 
                 st.subheader("Portfolio Allocation")
                 st.dataframe(portfolio)
@@ -939,59 +1311,89 @@ def main():
                 st.subheader("Portfolio Returns Distribution")
                 fig = plot_returns_distribution(weighted_returns, 'Portfolio')
                 st.plotly_chart(fig)
+
+                st.subheader("Portfolio Drawdown")
+                drawdown_fig = plot_drawdown(portfolio_data)
+                st.plotly_chart(drawdown_fig)
     elif app_mode == "Portfolio Optimization":
         st.title("Portfolio Optimization")
         st.write("Welcome to the Portfolio Optimization tool. This tool helps you optimize your portfolio for maximum return given a risk constraint.")
 
-        tickers = st.text_input("Enter stock tickers (comma-separated):")
-        if tickers:
-            tickers = [t.strip().upper() for t in tickers.split(',')]
+            # Input method selection
+        input_method = st.radio("Select input method:", ("Manual Entry", "CSV Upload"))
+
+        if input_method == "Manual Entry":
+            tickers = st.text_input("Enter stock tickers (comma-separated):")
+            if tickers:
+                tickers = [t.strip().upper() for t in tickers.split(',')]
+        else:
+            uploaded_file = st.file_uploader("Upload CSV file with tickers", type="csv")
+            if uploaded_file is not None:
+                df = pd.read_csv(uploaded_file)
+                tickers = df['Ticker'].tolist()  # Assuming the CSV has a 'Ticker' column
+
+        if 'tickers' in locals() and tickers:
             st.write(f"Selected Tickers: {', '.join(tickers)}")
 
             # Download data
             try:
-                data = yf.download(tickers, period="2y")['Adj Close']
+                data = yf.download(tickers, period="3y")['Adj Close']
                 returns = data.pct_change().dropna()
             except Exception as e:
                 st.error(f"Error fetching data: {e}")
                 return
 
-            # Calculate annualized expected returns and sample covariance
-            mu = returns.mean() * 252
-            S = returns.cov() * 252
+            # User input for target volatility
+            target_volatility = st.slider("Select target annual volatility:", 
+                                            min_value=0.05, max_value=0.50, 
+                                            value=0.20, step=0.01)
 
-            # Define the optimization problem
-            w = cp.Variable(len(tickers))
-            ret = mu.values @ w
-            risk = cp.quad_form(w, S.values)
+            # Optimize portfolio
+            optimal_weights = optimize_portfolio(returns, target_volatility)
 
-            risk_param = cp.Parameter(nonneg=True)
-            prob = cp.Problem(cp.Maximize(ret), [cp.sum(w) == 1, w >= 0, risk <= risk_param])
+            # Display optimal portfolio allocation
+            case1, case2 = st.columns(2)
+            
+            with case1:
+                st.write("Optimal Portfolio Allocation:")
+                for ticker, weight in zip(tickers, optimal_weights):
+                    st.write(f"{ticker}: {weight:.2%}")
 
-            # Solve the problem for different risk levels
-            risk_levels = np.linspace(0.1, 0.3, 20)
+            # Calculate and display portfolio metrics
+            metrics = calculate_portfolio_metrics(optimal_weights, returns, returns.mean())
+            with case2:
+                st.write("\nPortfolio Metrics:")
+                for metric, value in metrics.items():
+                    if metric in ['Expected Return', 'Volatility']:
+                        st.write(f"{metric}: {value:.2%}")
+                    elif metric in ['Beta', 'VaR (95%)', 'CVaR (95%)']:
+                        st.write(f"{metric}: {value:.2f}")
+                    else:
+                        
+                        st.write(f"{metric}: {value}")
+
+            risk_levels = np.linspace(0.05, 0.50, 100)
             returns_efficient = []
             for risk_level in risk_levels:
-                risk_param.value = risk_level
-                prob.solve()
-                returns_efficient.append(prob.value)
+                weights = optimize_portfolio(returns, risk_level)
+                if weights is not None:
+                    if weights.shape[0] == returns.shape[1]:
+                        portfolio_return = returns.mean().dot(weights) * 252
+                        returns_efficient.append(portfolio_return)
+                    
 
-            # Plot Efficient Frontier
-            st.pyplot(plot_efficient_frontier(risk_levels, returns_efficient))
+            # Efficient Frontier
+            st.plotly_chart(plot_efficient_frontier(risk_levels, returns_efficient))
 
-            # Display optimal portfolio for a given risk level
-            risk_level = st.slider("Select risk level:", min_value=0.1, max_value=0.3, value=0.2, step=0.01)
-            risk_param.value = risk_level
-            prob.solve()
-
-            st.write("Optimal Portfolio Allocation:")
-            weights = w.value
-            for ticker, weight in zip(tickers, weights):
-                st.write(f"{ticker}: {weight:.2%}")
-
-            # Show risk and return for the selected risk level
-            st.write(f"Expected Return: {mu.values @ weights:.2%}")
-            st.write(f"Portfolio Risk (Standard Deviation): {np.sqrt(weights @ S.values @ weights):.2%}")
+            # Monte Carlo Simulation
+            st.write("\nMonte Carlo Simulation:")
+            simulated_returns = run_monte_carlo(optimal_weights, returns)
+            fig, ax = plt.subplots()
+            ax.hist(simulated_returns, bins=50, alpha=0.7, color='blue')
+            ax.set_xlabel('Portfolio Return')
+            ax.set_ylabel('Frequency')
+            ax.set_title('Monte Carlo Simulation of Portfolio Returns')
+            st.pyplot(fig)
 
     elif app_mode == "News/ Sentiment Analysis":
         st.title("News/ Sentiment Analysis")
