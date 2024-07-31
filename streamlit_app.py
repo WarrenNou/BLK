@@ -1209,7 +1209,7 @@ def main():
                 st.plotly_chart(plot_portfolio_allocation(portfolio))
             
             with col2:
-                st.subheader("Portfolio Analysis")
+                
                 portfolio_analysis =LLM_feedback({
                     'Ticker': 'Portfolio',
                     'Age': age,
