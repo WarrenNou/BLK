@@ -1337,7 +1337,7 @@ def main():
 
             # Download data
             try:
-                data = yf.download(tickers, period="3y")['Adj Close']
+                data = yf.download(tickers, period="3y",progress='false')['Adj Close']
                 returns = data.pct_change().dropna()
             except Exception as e:
                 st.error(f"Error fetching data: {e}")
